@@ -1,0 +1,11 @@
+﻿numpy
+polars
+pyarrow
+pandas
+scikit-learn
+scipy
+matplotlib
+tqdm
+pyyaml
+huggingface_hub
+transformers

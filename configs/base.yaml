@@ -1,0 +1,15 @@
+seed: 42
+data:
+  raw_path: data/raw/flat/50m/multi_event.parquet
+  vocab_size: 50000        # уточним по EDA
+  max_len: 128
+  organic_only: true
+  positive_ratio_threshold: 50
+model:
+  n_layer: 4
+  n_head: 4
+  n_embd: 256
+train:
+  batch_size: 64
+  lr: 5.0e-4
+  epochs: 5
