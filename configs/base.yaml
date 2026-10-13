@@ -5,6 +5,13 @@ data:
   max_len: 128
   organic_only: true
   positive_ratio_threshold: 50
+  session_gap_sec: 1800
+  label_window_sec: 3600
+split:
+  train_end_day: 285
+  val_start_day: 286
+  val_end_day: 293
+  test_start_day: 294
 model:
   n_layer: 4
   n_head: 4
