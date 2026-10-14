@@ -29,6 +29,7 @@ ap.add_argument("--gamma", type=float, default=0.9)
 ap.add_argument("--beta", type=float, default=0.05, help="KL coefficient")
 ap.add_argument("--sft", type=float, default=0.1, help="SFT anchor coefficient")
 ap.add_argument("--lr", type=float, default=3e-5)
+ap.add_argument("--adv_norm", choices=["none", "std"], default="none", help="std = divide advantages by batch std (run A)")
 ap.add_argument("--chunk", type=int, default=64)
 ap.add_argument("--log_every", type=int, default=10)
 ap.add_argument("--save_every", type=int, default=100)
@@ -100,7 +101,9 @@ for step in range(1, args.steps + 1):
         R[:, t] = run
     Rg = R.view(B, G, H)
     A = ((Rg - Rg.mean(1, keepdim=True)) * G / (G - 1)).reshape(M, H)
-    A = A / (A.std() + 1e-6)
+    adv_std = A.std().item()
+    if args.adv_norm == "std":
+        A = A / (A.std() + 1e-6)
 
     # ---- policy update (chunks; gradients accumulate) ----
     opt.zero_grad(set_to_none=True)
@@ -127,7 +130,7 @@ for step in range(1, args.steps + 1):
     torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
     opt.step()
 
-    st = {"reward_A": r.mean().item(), "reward_B": rb.mean().item(), "kl": kl_sum / (M * H),
+    st = {"adv_std": adv_std, "reward_A": r.mean().item(), "reward_B": rb.mean().item(), "kl": kl_sum / (M * H),
           "entropy": ent_sum / (M * H), "sft_nll": nll_sum / M,
           "logrank": torch.log10(gen.float() - 1).mean().item(), "len_sec": len_sec_t[gen].mean().item(),
           "in_ctx": (gen[:, :, None] == ctx[:, None, :]).any(-1).float().mean().item(),
@@ -137,7 +140,7 @@ for step in range(1, args.steps + 1):
     n_acc += 1
     if step == 1 or step % args.log_every == 0:
         m = {k: v / n_acc for k, v in acc.items()}
-        print(f"step {step:4d} | rA {m['reward_A']:.4f} rB {m['reward_B']:.4f} | KL {m['kl']:.4f} ent {m['entropy']:.2f} "
+        print(f"step {step:4d} | adv {m['adv_std']:.3f} rA {m['reward_A']:.4f} rB {m['reward_B']:.4f} | KL {m['kl']:.4f} ent {m['entropy']:.2f} "
               f"sft {m['sft_nll']:.3f} | logrank {m['logrank']:.2f} len {m['len_sec']:.0f}s in_ctx {m['in_ctx']:.3f} "
               f"uniq {m['uniq']:.3f} | {(time.time() - t0) / step:.2f}s/step", flush=True)
         log.write(json.dumps({"step": step, **m}) + "\n"); log.flush()
