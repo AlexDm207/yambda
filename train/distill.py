@@ -25,6 +25,7 @@ ap.add_argument("--rm_a", default="checkpoints/rm_a/best.pt")
 ap.add_argument("--reward", choices=REWARDS, default="ratio")
 ap.add_argument("--alpha", type=float, required=True)
 ap.add_argument("--K", type=int, default=100)
+ap.add_argument("--target", choices=["cand", "full"], default="cand")
 ap.add_argument("--steps", type=int, default=600)
 ap.add_argument("--B", type=int, default=32)
 ap.add_argument("--lr", type=float, default=5e-5)
@@ -47,7 +48,7 @@ for p in ref.parameters():
 policy.eval()
 ref.eval()
 rm = load_rm(args.rm_a)
-len_sec, len_bias = token_stats(ev, V)
+len_sec, len_bias = token_stats(ev, V, args.reward)
 Wr = ref.tok.weight[2:].float().T.contiguous()
 opt = torch.optim.AdamW(policy.parameters(), lr=args.lr, weight_decay=0.0, betas=(0.9, 0.98))
 
@@ -93,7 +94,12 @@ for step in range(1, args.steps + 1):
         h = policy.hidden(x)[:, -1]
     lp = torch.log_softmax(h.float() @ policy.tok.weight[2:].float().T, dim=-1)
     lp_k = lp.gather(1, ik)
-    loss = -(q * lp_k).sum(1).mean()
+    if args.target == "full":
+        q_full = lpr.exp().clone()
+        q_full.scatter_(1, ik, q * lpr_k.exp().sum(1, keepdim=True))   # keep the reference mass of the candidate set
+        loss = -(q_full * lp).sum(1).mean()
+    else:
+        loss = -(q * lp_k).sum(1).mean()
     opt.zero_grad(set_to_none=True)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)

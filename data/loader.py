@@ -123,3 +123,41 @@ def make_rm_batch(ev, starts, ends, L=128):
     mask = valid & (tok > 1)                      # loss only for in-vocabulary candidates
     t = torch.from_numpy
     return t(tok).long(), t(fb_in).float(), t(r), t(lk), t(ds), t(mask)
+
+def long_targets(ev):
+    """Adds ev['g'] (n,4) = [>=1, >=3, >=10 further full listens later in the same session, any listening next calendar day],
+    ev['g_ok'] censoring mask, ev['sess_pos'], ev['uidx']."""
+    df = pl.read_parquet(ROOT / "data/processed/events.parquet", columns=["uid", "timestamp", "session"])
+    uid = df["uid"].to_numpy().astype(np.int64)
+    ts = df["timestamp"].to_numpy().astype(np.int64)
+    sess = df["session"].to_numpy().astype(np.int64)
+    n = len(uid)
+    assert n == len(ev["token"])
+    new = np.ones(n, dtype=bool)
+    new[1:] = (uid[1:] != uid[:-1]) | (sess[1:] != sess[:-1])
+    first = np.flatnonzero(new)
+    gid = np.cumsum(new) - 1
+    last = np.concatenate([first[1:], [n]]) - 1
+    cs = np.cumsum((ev["ratio"] >= 50).astype(np.int64))
+    rem = cs[last[gid]] - cs                         # further full listens in the same session
+    day = ts // 86400
+    act = pl.read_parquet(ROOT / "data/processed/activity_daily.parquet", columns=["uid", "day"])
+    key_act = np.unique(act["uid"].to_numpy().astype(np.int64) * 1000 + act["day"].to_numpy().astype(np.int64))
+    key_next = uid * 1000 + day + 1
+    pos = np.minimum(np.searchsorted(key_act, key_next), len(key_act) - 1)
+    returned = key_act[pos] == key_next
+    ev["g"] = np.stack([rem >= 1, rem >= 3, rem >= 10, returned], 1).astype(np.float32)
+    ev["g_ok"] = np.stack([np.ones(n, bool)] * 3 + [day + 1 <= 300], 1)    # next-day label needs the next day inside the data
+    ev["sess_pos"] = (np.arange(n) - first[gid]).astype(np.float32)
+    ev["uidx"] = np.repeat(np.arange(len(ev["u_start"])), ev["u_end"] - ev["u_start"])
+    return ev
+
+
+def make_long_batch(ev, starts, ends, L=128):
+    tok, fb_in, *_ = make_rm_batch(ev, starts, ends, L)
+    n = len(ev["token"])
+    raw = starts[:, None] + np.arange(L)[None, :]
+    valid = raw < ends[:, None]
+    idx = np.minimum(raw, n - 1)
+    ok = ev["g_ok"][idx] & valid[..., None] & (tok.numpy() > 1)[..., None]
+    return tok, fb_in, torch.from_numpy(ev["g"][idx]).float(), torch.from_numpy(ok)

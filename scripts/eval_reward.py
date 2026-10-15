@@ -61,7 +61,7 @@ for key, path in [("A", args.rm_a), ("B", args.rm_b)]:
     rm = load_rm(path)
     P[key] = rm_score_candidates(rm, tok_ctx, fb_in, fb_last, cands, dev)
     del rm
-len_sec, len_bias = token_stats(ev, V)
+len_sec, len_bias = token_stats(ev, V, args.reward)
 R = {k: combine(P[k], cands, args.reward, len_sec, len_bias) for k in P}
 
 rows, full = [], {}

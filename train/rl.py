@@ -52,7 +52,7 @@ policy.eval()   # no dropout: sampling and training use the same distribution
 ref.eval()
 rm_a = load_rm(args.rm_a)
 rm_b = load_rm(args.rm_b) if args.rm_b else None
-len_sec, len_bias = token_stats(ev, V)
+len_sec, len_bias = token_stats(ev, V, args.reward)
 len_sec_t = torch.tensor(len_sec, device=dev)
 len_bias_t = torch.tensor(len_bias, device=dev)
 opt = torch.optim.AdamW(policy.parameters(), lr=args.lr, weight_decay=0.0, betas=(0.9, 0.98))

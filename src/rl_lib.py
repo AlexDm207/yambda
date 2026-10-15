@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import torch
 
@@ -5,8 +7,8 @@ from models.gpt_rec import GPTRec, GPTRecConfig
 from models.reward_model import RewardModel
 from src.utils import ROOT
 
-REWARDS = ["ratio", "comp", "seconds", "composite", "debiased"]
-AC = dict(device_type="cuda", dtype=torch.bfloat16)
+REWARDS = ["ratio", "comp", "seconds", "composite", "debiased", "itemdebiased"]
+AC: dict[str, Any] = dict(device_type="cuda", dtype=torch.bfloat16)
 
 
 def load_policy(path, device="cuda"):
@@ -24,7 +26,7 @@ def load_rm(path, device="cuda"):
     return m.to(device).eval()
 
 
-def token_stats(ev, V):
+def token_stats(ev, V, reward="ratio"):
     """Per-token mean track length (sec) and length-bin mean ratio, from TRAIN events only."""
     m = ev["period"] == 0
     tok = ev["token"][m]
@@ -35,6 +37,10 @@ def token_stats(ev, V):
     b = np.minimum((ln // 60).astype(np.int64), 8)
     bin_mean = np.bincount(b, weights=r, minlength=9) / np.maximum(np.bincount(b, minlength=9), 1)
     len_bias = bin_mean[np.minimum((len_sec // 60).astype(np.int64), 8)]
+    if reward == "itemdebiased":
+        g = r.mean()
+        item_mean = (np.bincount(tok, weights=r, minlength=V) + 20 * g) / (cnt + 20)   # shrunk item mean, train only
+        return len_sec.astype(np.float32), item_mean.astype(np.float32)
     return len_sec.astype(np.float32), len_bias.astype(np.float32)
 
 
@@ -49,7 +55,7 @@ def combine(P, tok, preset, len_sec, len_bias):
         return pr * len_sec[tok] / 200.0
     if preset == "composite":
         return pc + 10.0 * pl - 5.0 * pd
-    if preset == "debiased":
+    if preset in ("debiased", "itemdebiased"):
         return pr - len_bias[tok]
     raise ValueError(preset)
 
