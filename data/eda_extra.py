@@ -65,6 +65,7 @@ plt.tight_layout(); plt.savefig(FIG / "eda_per_day.png", dpi=120); plt.close()
 h = (listens.group_by(pl.col("played_ratio_pct").clip(0, 100).alias("r"))
      .agg(pl.len().alias("n")).sort("r").collect())
 plt.figure(figsize=(7, 3.5)); plt.bar(h["r"], h["n"]); plt.title("Распределение played_ratio (обрезано до 100)")
+plt.ylabel("число прослушиваний")
 plt.tight_layout(); plt.savefig(FIG / "eda_ratio_hist.png", dpi=120); plt.close()
 
 print("\n=== 6. Доля повторов (organic) ===")
