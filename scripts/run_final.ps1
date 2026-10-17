@@ -1,4 +1,4 @@
-param([string]$split = "val", [string]$tag = "main")
+param([string]$split = "val", [string]$tag = "main", [int]$n_eval = 6000)
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
 $g = @()
@@ -17,4 +17,4 @@ if ($split -eq "val") {                       # extra single-seed configurations
   $g += "RL_sft1_b0.2=checkpoints/rl_sft1_beta0.2/last.pt"
   $g += "Distill_a30_long=checkpoints/distillfull_a30_long/last.pt"
 }
-python scripts/final_eval.py --split $split --tag $tag --groups $g
+python scripts/final_eval.py --split $split --tag $tag --n_eval $n_eval --groups $g

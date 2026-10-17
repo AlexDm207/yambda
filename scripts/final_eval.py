@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from data.loader import eval_samples, load_events
+from data.loader import eval_samples, load_events, long_targets
 from src.rl_lib import AC, context_arrays, load_policy, load_rm, rm_score_candidates, token_stats
 from src.utils import ROOT, load_cfg
 
@@ -30,13 +30,16 @@ dev = "cuda"
 cfg = load_cfg()
 L, V = cfg["data"]["max_len"], cfg["data"]["vocab_size"] + 2
 C, TOP = L - 1, 10
-ev = load_events()
+ev = long_targets(load_events())
 idx, cs = eval_samples(ev, args.split, 10, seed=2024, L=L)
 idx = idx[(idx - cs) >= C]
 if len(idx) > args.n_eval:                                   # same subset as in eval_reward.py
     idx = np.sort(np.random.default_rng(0).choice(idx, args.n_eval, replace=False))
 tok_ctx, fb_in, fb_last = context_arrays(ev, idx, C)
 tgt = ev["token"][idx]
+
+real_ratio = ev["ratio"][idx].astype(np.float64) / 100.0     # real outcomes of the logged next listen
+real_g3, real_g10 = ev["g"][idx, 1].astype(np.float64), ev["g"][idx, 2].astype(np.float64)
 inv = (tgt > 1).astype(np.float64)                           # relevance metrics: in-vocabulary targets only
 N = len(idx)
 user = np.unique(np.searchsorted(ev["u_start"], idx, side="right") - 1, return_inverse=True)[1]
@@ -72,6 +75,8 @@ def feats(final, PA, PB):
     hit = eq.any(1).astype(np.float64)
     pos = eq.argmax(1) + 1
     return {"final": final, "hit": hit, "ndcg": hit / np.log2(pos + 1), "map": hit / pos,
+            "hit_ratio": hit * real_ratio, "hit_pos": hit * (real_ratio >= 0.5),
+            "hit_g3": hit * real_g3, "hit_g10": hit * real_g10,
             "rA": PA[..., 0].mean(1), "rB": PB[..., 0].mean(1), "like": PA[..., 2].mean(1),
             "len": len_sec[final].mean(1), "top100": (final <= 101).mean(1),
             "ctx": (final[:, :, None] == tok_ctx[:, None, :]).any(-1).mean(1)}
@@ -93,13 +98,15 @@ for g in args.groups:
         members[name].append(feats(fin, *score(fin)))
         print("evaluated", p)
 
-REL, OTH = ["hit", "ndcg", "map"], ["rA", "rB", "like", "len", "top100", "ctx"]
-KEYS = REL + ["rA", "rB", "like", "len", "top100", "coverage", "maxshare"]
+REL, OTH = ["hit", "ndcg", "map", "hit_ratio", "hit_pos", "hit_g3", "hit_g10"], ["rA", "rB", "like", "len", "top100", "ctx"]
+KEYS = REL + ["rA", "rB", "like", "len", "top100", "coverage", "maxshare", "rph", "g3ph"]
 
 
 def metrics(f, w):
     wi = w * inv
     d = {k: float((wi * f[k]).sum() / wi.sum()) for k in REL}
+    d["rph"] = d["hit_ratio"] / max(d["hit"], 1e-12)      # real played ratio per hit
+    d["g3ph"] = d["hit_g3"] / max(d["hit"], 1e-12)        # real P(>=3 more full listens in session) per hit
     d.update({k: float((w * f[k]).sum() / w.sum()) for k in OTH})
     cnt = np.bincount(f["final"].ravel(), weights=np.repeat(w, f["final"].shape[1]), minlength=V)[2:]
     d["coverage"], d["maxshare"] = float((cnt > 0).mean()), float(cnt.max() / cnt.sum())
@@ -142,6 +149,7 @@ def fmt(v, d=3):
 
 for k in members:
     r = {"method": k, "seeds": len(members[k]), "R@10": fmt(out[k]["hit"]), "NDCG@10": fmt(out[k]["ndcg"]),
+         "hit_ratio": fmt(out[k]["hit_ratio"]), "ratio/hit": fmt(out[k]["rph"]), "g>=3/hit": fmt(out[k]["g3ph"]),
          "rewardA": f"{out[k]['rA'][0]:.4f}", "rewardB": f"{out[k]['rB'][0]:.4f}", "len": f"{out[k]['len'][0]:.0f}",
          "top100": f"{out[k]['top100'][0]:.3f}", "maxshare": f"{out[k]['maxshare'][0]:.4f}",
          "coverage": f"{out[k]['coverage'][0]:.3f}"}
