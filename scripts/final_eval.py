@@ -23,6 +23,9 @@ ap.add_argument("--groups", nargs="*", default=[], help="name=ckpt1,ckpt2,... (o
 ap.add_argument("--alphas", type=float, nargs="*", default=[0, 2, 5, 10, 20, 30, 50, 100, 200, 300])
 ap.add_argument("--n_eval", type=int, default=6000)
 ap.add_argument("--boot", type=int, default=1000)
+ap.add_argument("--K", type=int, default=100, help="reranking candidates")
+ap.add_argument("--no_rm", action="store_true", help="skip reward-model scoring (model-free rewards)")
+ap.add_argument("--reward", default="ratio", choices=["ratio", "novelty"])
 ap.add_argument("--tag", default="main")
 args = ap.parse_args()
 
@@ -46,6 +49,13 @@ user = np.unique(np.searchsorted(ev["u_start"], idx, side="right") - 1, return_i
 U = int(user.max()) + 1
 len_sec, _ = token_stats(ev, V)
 rm_a, rm_b = load_rm(args.rm_a), load_rm(args.rm_b)
+
+
+def R_of(P, tokens):
+    """Reward for the frontier and the gap: predicted ratio (reward model) or log10 popularity rank (no model)."""
+    return np.log10(tokens - 1.0) if args.reward == "novelty" else P[..., 0]
+
+
 print(f"{args.split}: {N} contexts from {U} users; in-vocabulary targets {inv.mean():.1%}")
 
 
@@ -66,6 +76,9 @@ def policy_topk(path, K):
 
 
 def score(cands):
+    if args.no_rm:
+        z = np.zeros(cands.shape + (4,), np.float32)
+        return z, z
     return (rm_score_candidates(rm_a, tok_ctx, fb_in, fb_last, cands, dev),
             rm_score_candidates(rm_b, tok_ctx, fb_in, fb_last, cands, dev))
 
@@ -77,16 +90,16 @@ def feats(final, PA, PB):
     return {"final": final, "hit": hit, "ndcg": hit / np.log2(pos + 1), "map": hit / pos,
             "hit_ratio": hit * real_ratio, "hit_pos": hit * (real_ratio >= 0.5),
             "hit_g3": hit * real_g3, "hit_g10": hit * real_g10,
-            "rA": PA[..., 0].mean(1), "rB": PB[..., 0].mean(1), "like": PA[..., 2].mean(1),
+            "rA": R_of(PA, final).mean(1), "rB": R_of(PB, final).mean(1), "like": PA[..., 2].mean(1),
             "len": len_sec[final].mean(1), "top100": (final <= 101).mean(1),
             "ctx": (final[:, :, None] == tok_ctx[:, None, :]).any(-1).mean(1)}
 
 
 members = {}                                                  # name -> list of per-seed feature dicts
-cands, logp = policy_topk(args.base, 100)
+cands, logp = policy_topk(args.base, args.K)
 PA, PB = score(cands)
 for a in args.alphas:                                         # rerank frontier of the base model
-    order = np.argsort(-(logp + a * PA[..., 0]), axis=1)[:, :TOP]
+    order = np.argsort(-(logp + a * R_of(PA, cands)), axis=1)[:, :TOP]
     fin = np.take_along_axis(cands, order, 1)
     members[f"rerank_a{a:g}"] = [feats(fin, np.take_along_axis(PA, order[..., None], 1),
                                        np.take_along_axis(PB, order[..., None], 1))]

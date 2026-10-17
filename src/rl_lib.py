@@ -7,7 +7,7 @@ from models.gpt_rec import GPTRec, GPTRecConfig
 from models.reward_model import RewardModel
 from src.utils import ROOT
 
-REWARDS = ["ratio", "comp", "seconds", "composite", "debiased", "itemdebiased"]
+REWARDS = ["novelty", "ratio", "comp", "seconds", "composite", "debiased", "itemdebiased"]
 AC: dict[str, Any] = dict(device_type="cuda", dtype=torch.bfloat16)
 
 
@@ -46,6 +46,9 @@ def token_stats(ev, V, reward="ratio"):
 
 def combine(P, tok, preset, len_sec, len_bias):
     """P[..., 4] = probabilities [ratio, completed, like, dislike]; works for numpy and torch."""
+    if preset == "novelty":                      # computable reward without a model: log10 of the popularity rank
+        t = tok - 1
+        return torch.log10(t.float()) if torch.is_tensor(t) else np.log10(t.astype(np.float64))
     pr, pc, pl, pd = P[..., 0], P[..., 1], P[..., 2], P[..., 3]
     if preset == "ratio":
         return pr
