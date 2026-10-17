@@ -124,3 +124,23 @@ def rm_score_candidates(rm, ctx_tok, ctx_fb_in, fb_last, cands, device="cuda"):
             out = rm(x, fb)
         out_all[sl] = torch.sigmoid(out[:, C].float()).view(n, K, 4).cpu().numpy()
     return out_all
+
+# --- itemmean reward ---
+# model-free item-level reward: shrunk mean played ratio of the track in TRAIN (same scale as the ratio reward)
+if "itemmean" not in REWARDS:
+    REWARDS.append("itemmean")
+
+_combine_orig = combine
+_token_stats_orig = token_stats
+
+
+def combine(P, tok, preset, len_sec, len_bias):
+    if preset == "itemmean":
+        return len_bias[tok]
+    return _combine_orig(P, tok, preset, len_sec, len_bias)
+
+
+def token_stats(ev, V, reward="ratio"):
+    if reward == "itemmean":
+        return _token_stats_orig(ev, V, "itemdebiased")      # its second output is the shrunk item mean
+    return _token_stats_orig(ev, V, reward)

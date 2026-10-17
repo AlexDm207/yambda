@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 from src.utils import ROOT
 
@@ -38,40 +39,90 @@ final = load(RES / f"{stem}.json")
 if final:
     rr = sorted([k for k in final if k.startswith("rerank_a")], key=lambda k: float(k[8:]))
     others = [k for k in final if not k.startswith("rerank_")]
+    VARIANT = ("RL_debiased", "RL_seconds", "RL_sft", "Distill_a30_long")       # single-seed variants, val only
+    main = [k for k in others if not k.startswith(VARIANT)]
+    variants = [k for k in others if k.startswith(VARIANT)]
+    ref = [k for k in main if k in ("RL_beta0.2", "RL_beta0.1", "RL_beta0.05", "Distill_a30")]
 
-    offsets = {                                                        # label offsets (points) for the Pareto plot
-        "Distill_a10": (5, 6), "RL_sft1_b0.2": (-6, 1), "RL_beta0.4": (-6, -16), "Distill_a30": (7, 3),
-        "Distill_a30_long": (7, -11), "Base_pos": (-6, -12), "RL_debiased_b0.1": (-7, 3),
-        "RL_sft0_b0.2": (-7, -6), "RL_beta0.1": (-7, -14), "RL_debiased_b0.05": (-7, -4), "RL_beta0.05": (-7, -4)}
-
-    def panel(ax, xkey, ykey, ylabel, ci, final=final):
-        ax.plot([final[k][xkey][0] for k in rr], [final[k][ykey][0] for k in rr], "o-", color="k", ms=3,
-                label="переранжирование топ-100 базы")
-        for k in rr:
-            if float(k[8:]) in (10, 30, 100):
-                ax.annotate("α=" + k[8:], (final[k][xkey][0], final[k][ykey][0]), fontsize=7,
-                            xytext=(3, 4), textcoords="offset points")
-        for k in others:
+    def panel(ax, xkey, ykey, ylabel, ci, keys, faded=(), final=final):
+        fx, fy = [final[k][xkey][0] for k in rr], [final[k][ykey][0] for k in rr]
+        ax.plot(fx, fy, "o-", color="k", ms=3, label="переранжирование топ-100 базы")
+        obst = [(x0 + (x1 - x0) * t / 10, y0 + (y1 - y0) * t / 10)          # points along the frontier curve
+                for (x0, y0), (x1, y1) in zip(zip(fx, fy), zip(fx[1:], fy[1:])) for t in range(11)]
+        labels = [(final[k][xkey][0], final[k][ykey][0], "α=" + k[8:]) for k in rr if float(k[8:]) in (10, 30, 100)]
+        for k in [*faded, *keys]:
             x, y = final[k][xkey][0], final[k][ykey]
-            ax.errorbar(x, y[0], yerr=[[y[0] - y[1]], [y[2] - y[0]]] if ci else None, fmt="s", color=color(k), capsize=3)
-            ax.annotate(label(k), (x, y[0]), fontsize=7, xytext=offsets.get(k, (4, -9)) if ci else (4, -9),
-                        textcoords="offset points", ha="right" if ci and offsets.get(k, (0,))[0] < 0 else "left")
+            single = len(final[k].get("seeds_R10", [])) < 2                  # hollow marker: one seed only
+            ax.errorbar(x, y[0], yerr=[[y[0] - y[1]], [y[2] - y[0]]] if ci else None, fmt="s", color=color(k),
+                        capsize=3, mfc="white" if single else color(k), alpha=0.35 if k in faded else 1.0)
+            obst += [(x, y[0] + (y[2] - y[1]) * (t / 4 - 0.5)) for t in range(5)] if ci else [(x, y[0])]
+            labels.append((x, y[0], label(k)))
         ax.set_ylabel(ylabel)
+        ax._labels, ax._obst = labels, obst
 
-    fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
-    for ax, xk, t in zip(axs, ["rA", "rB"], ["награда по rm_a (на ней обучали)", "награда по rm_b (проверочная)"]):
-        panel(ax, xk, "hit", "Recall@10", True)
-        ax.set_xlabel("средняя предсказанная доля прослушивания в топ-10")
-        ax.set_title(t)
-    axs[0].legend(fontsize=7)
-    plt.tight_layout(); plt.savefig(FIG / f"{stem}_pareto.png"); plt.close()
+    def seed_legend(ax):
+        h = [Line2D([], [], color="k", marker="o", ms=3, label="переранжирование топ-100 базы"),
+             Line2D([], [], ls="", marker="s", color="0.3", label="среднее по 3 seed, 95% ДИ"),
+             Line2D([], [], ls="", marker="s", color="0.3", mfc="white", label="1 seed, 95% ДИ")]
+        ax.legend(handles=h, fontsize=7, loc="lower left")
+
+    CAND = [(dx, dy) for dy in (0, 7, -7, 14, -14, 21, -21, 28, -28, 35, -35) for dx in (5, -5)]
+
+    def place_labels(fig):
+        """Greedy label placement: per label, the first candidate offset with the fewest collisions
+        (other labels, markers, error bars, the frontier curve, the axes border)."""
+        fig.canvas.draw()
+        rend = fig.canvas.get_renderer()
+        for ax in fig.axes:
+            if not hasattr(ax, "_labels"):
+                continue
+            pts = ax.transData.transform(ax._obst + [(x, y) for x, y, _ in ax._labels])
+            placed = []
+            for x, y, text in ax._labels:
+                best = None
+                for dx, dy in CAND:
+                    a = ax.annotate(text, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=7,
+                                    ha="left" if dx > 0 else "right", va="center")
+                    bb = a.get_window_extent(rend).expanded(1.04, 1.15)
+                    bm = bb.padded(5)                                    # markers are ~10 px wide
+                    cost = (10 * sum(bb.overlaps(p) for p in placed) + sum(bm.contains(px, py) for px, py in pts)
+                            + 20 * (not (ax.bbox.contains(bb.x0, bb.y0) and ax.bbox.contains(bb.x1, bb.y1))))
+                    if best is None or cost < best[0]:
+                        if best:
+                            best[1].remove()
+                        best = (cost, a, bb)
+                    else:
+                        a.remove()
+                    if cost == 0:
+                        break
+                assert best is not None
+                placed.append(best[2])
+                dx, dy = best[1].xyann
+                if abs(dy) >= 14:                                        # far from its point: thin leader line
+                    best[1].remove()
+                    ax.annotate(text, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=7,
+                                ha="left" if dx > 0 else "right", va="center",
+                                arrowprops=dict(arrowstyle="-", lw=0.5, color="0.5", shrinkA=0, shrinkB=4))
+
+    for name, keys, faded in [("pareto", main, ()), ("pareto_variants", variants, ref)]:
+        if not keys:
+            continue
+        fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+        for ax, xk, t in zip(axs, ["rA", "rB"], ["награда по rm_a (на ней обучали)", "награда по rm_b (проверочная)"]):
+            panel(ax, xk, "hit", "Recall@10", True, keys, faded)
+            ax.set_xlabel("средняя предсказанная доля прослушивания в топ-10")
+            ax.set_title(t)
+        seed_legend(axs[0])
+        if faded:
+            fig.suptitle("Варианты награды и регуляризации (1 seed); бледные точки: основные методы", fontsize=10)
+        plt.tight_layout(); place_labels(fig); plt.savefig(FIG / f"{stem}_{name}.png"); plt.close()
 
     fig, axs = plt.subplots(1, 3, figsize=(14, 4))
     for ax, yk, yl in zip(axs, ["top100", "maxshare", "coverage"],
                           ["доля слотов 100 самых популярных треков", "доля слотов у самого частого трека", "покрытие каталога"]):
-        panel(ax, "rA", yk, yl, False)
+        panel(ax, "rA", yk, yl, False, others)
         ax.set_xlabel("награда по rm_a")
-    plt.tight_layout(); plt.savefig(FIG / f"{stem}_behaviour.png"); plt.close()
+    plt.tight_layout(); place_labels(fig); plt.savefig(FIG / f"{stem}_behaviour.png"); plt.close()
 
 
 # ---- 3. collapse trajectories (training logs, seed 42) ----

@@ -60,6 +60,7 @@ print(per_day.head(5)); print(per_day.tail(5))
 fig, ax = plt.subplots(1, 2, figsize=(11, 3.5))
 ax[0].plot(per_day["day"], per_day["n"]); ax[0].set_title("Прослушиваний в день")
 ax[1].plot(per_day["day"], per_day["active_users"]); ax[1].set_title("Активных пользователей в день")
+ax[0].set(xlabel="день", ylabel="число прослушиваний"); ax[1].set(xlabel="день", ylabel="число пользователей")
 plt.tight_layout(); plt.savefig(FIG / "eda_per_day.png", dpi=120); plt.close()
 
 h = (listens.group_by(pl.col("played_ratio_pct").clip(0, 100).alias("r"))
