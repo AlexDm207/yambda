@@ -25,7 +25,7 @@ ap.add_argument("--n_eval", type=int, default=6000)
 ap.add_argument("--boot", type=int, default=1000)
 ap.add_argument("--K", type=int, default=100, help="reranking candidates")
 ap.add_argument("--no_rm", action="store_true", help="skip reward-model scoring (model-free rewards)")
-ap.add_argument("--reward", default="ratio", choices=["ratio", "novelty"])
+ap.add_argument("--reward", default="ratio", choices=["ratio", "novelty", "itemmean"])
 ap.add_argument("--tag", default="main")
 args = ap.parse_args()
 
@@ -48,12 +48,17 @@ N = len(idx)
 user = np.unique(np.searchsorted(ev["u_start"], idx, side="right") - 1, return_inverse=True)[1]
 U = int(user.max()) + 1
 len_sec, _ = token_stats(ev, V)
+_, ITEM_MEAN = token_stats(ev, V, "itemmean")
 rm_a, rm_b = load_rm(args.rm_a), load_rm(args.rm_b)
 
 
 def R_of(P, tokens):
     """Reward for the frontier and the gap: predicted ratio (reward model) or log10 popularity rank (no model)."""
-    return np.log10(tokens - 1.0) if args.reward == "novelty" else P[..., 0]
+    if args.reward == "novelty":
+        return np.log10(tokens - 1.0)
+    if args.reward == "itemmean":
+        return ITEM_MEAN[tokens]
+    return P[..., 0]
 
 
 print(f"{args.split}: {N} contexts from {U} users; in-vocabulary targets {inv.mean():.1%}")
